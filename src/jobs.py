@@ -19,7 +19,8 @@ from telegram.error import BadRequest
 
 from src.config import Settings
 from src.errors import ProcessingError
-from src.video import make_black_video
+from src.models import ProcessingMode
+from src.video import make_black_video, probe_media
 
 log = logging.getLogger("blackscreen-bot")
 
@@ -31,14 +32,19 @@ class JobRunner:
     settings: Settings
     semaphore: asyncio.Semaphore
 
-    async def run(self, msg: Message, fetch: Fetch) -> None:
+    async def run(
+        self,
+        msg: Message,
+        fetch: Fetch,
+        mode: ProcessingMode = ProcessingMode.BLACK_SCREEN,
+    ) -> None:
         status = await msg.reply_text("⏳ Queued...", do_quote=True)
         async with self.semaphore:
             with tempfile.TemporaryDirectory(prefix="bsbot_") as t:
                 tmp = Path(t)
                 try:
                     src = await fetch(tmp, status)
-                    await self._convert_and_send(msg, src, tmp, status)
+                    await self._process_and_send(msg, src, tmp, status, mode)
                 except ProcessingError as e:
                     await status.edit_text(f"❌ {e}")
                 except BadRequest as e:
@@ -54,15 +60,35 @@ class JobRunner:
                     log.exception("Unexpected failure")
                     await status.edit_text("❌ Something went wrong. Please try again.")
 
-    async def _convert_and_send(
-        self, msg: Message, src: Path, tmp: Path, status: Message
+    async def _process_and_send(
+        self,
+        msg: Message,
+        src: Path,
+        tmp: Path,
+        status: Message,
+        mode: ProcessingMode,
     ) -> None:
-        out = tmp / f"black_{src.stem}.mp4"
-
-        await status.edit_text("🎬 Converting...")
-        info = await asyncio.to_thread(
-            make_black_video, src, out, self.settings.default_size, self.settings.max_duration
-        )
+        if mode == ProcessingMode.BLACK_SCREEN:
+            out = tmp / f"black_{src.stem}.mp4"
+            await status.edit_text("🎬 Converting to black screen...")
+            info = await asyncio.to_thread(
+                make_black_video,
+                src,
+                out,
+                self.settings.default_size,
+                self.settings.max_duration,
+            )
+        else:
+            out = src
+            info = await asyncio.to_thread(probe_media, src)
+            if (
+                self.settings.max_duration
+                and info.duration
+                and info.duration > self.settings.max_duration * 60
+            ):
+                raise ProcessingError(
+                    f"Media duration exceeds maximum limit of {self.settings.max_duration} minutes."
+                )
 
         if out.stat().st_size > self.settings.upload_limit:
             raise ProcessingError("The result is larger than Telegram's upload limit.")
