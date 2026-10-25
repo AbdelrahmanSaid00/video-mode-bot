@@ -20,7 +20,7 @@ from telegram.error import BadRequest
 from src.config import Settings
 from src.errors import ProcessingError
 from src.models import ProcessingMode
-from src.video import make_black_video, probe_media
+from src.video import make_black_video, probe
 
 log = logging.getLogger("blackscreen-bot")
 
@@ -80,7 +80,7 @@ class JobRunner:
             )
         else:
             out = src
-            info = await asyncio.to_thread(probe_media, src)
+            info = await asyncio.to_thread(probe, src)
             if (
                 self.settings.max_duration
                 and info.duration

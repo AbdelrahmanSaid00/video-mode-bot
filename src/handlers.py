@@ -12,6 +12,7 @@ from typing import Awaitable, Callable, NamedTuple
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
+from telegram.error import BadRequest
 
 from src import download, links
 from src.config import Settings
@@ -75,12 +76,12 @@ def create_handlers(settings: Settings, runner: JobRunner) -> Handlers:
         if not att:
             return
 
-        ctx.user_data[f"pending_{msg.message_id}"] = {
+        sent_msg = await msg.reply_text("اختر طريقة المعالجة:", reply_markup=build_keyboard())
+        ctx.user_data[f"pending_{sent_msg.message_id}"] = {
             "type": "media",
             "att": att,
+            "target_msg": msg,
         }
-
-        await msg.reply_text("اختر طريقة المعالجة:", reply_markup=build_keyboard())
 
     @gate
     async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -92,33 +93,43 @@ def create_handlers(settings: Settings, runner: JobRunner) -> Handlers:
             )
             return
 
-        ctx.user_data[f"pending_{msg.message_id}"] = {
+        sent_msg = await msg.reply_text("اختر طريقة المعالجة:", reply_markup=build_keyboard())
+        ctx.user_data[f"pending_{sent_msg.message_id}"] = {
             "type": "links",
             "links": found,
+            "target_msg": msg,
         }
-
-        await msg.reply_text("اختر طريقة المعالجة:", reply_markup=build_keyboard())
 
     @gate
     async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
 
-        if not query.data.startswith("mode:"):
+        if not query.data or not query.data.startswith("mode:"):
             return
 
         raw_mode = query.data.split(":", 1)[1]
         mode = ProcessingMode(raw_mode)
 
-        reply_msg = query.message
-        target_msg = reply_msg.reply_to_message
+        bot_msg = query.message
+        key = f"pending_{bot_msg.message_id}"
 
-        if not target_msg or f"pending_{target_msg.message_id}" not in ctx.user_data:
-            await query.edit_message_text("❌ حدث خطأ أو انتهت صلاحية الطلب. يرجى إعادة إرسال الملف أو اللينك.")
+        if key not in ctx.user_data:
+            err_text = "❌ حدث خطأ أو انتهت صلاحية الطلب. يرجى إعادة إرسال الملف أو اللينك."
+            if bot_msg.text != err_text:
+                try:
+                    await query.edit_message_text(err_text)
+                except BadRequest:
+                    pass
             return
 
-        pending_data = ctx.user_data.pop(f"pending_{target_msg.message_id}")
-        await query.delete_message()
+        pending_data = ctx.user_data.pop(key)
+        target_msg = pending_data["target_msg"]
+
+        try:
+            await query.delete_message()
+        except BadRequest:
+            pass
 
         if pending_data["type"] == "media":
             att = pending_data["att"]
@@ -139,7 +150,7 @@ def create_handlers(settings: Settings, runner: JobRunner) -> Handlers:
                 async def fetch(tmp: Path, status: Message, link=link) -> Path:
                     await status.edit_text(f"⬇️ Downloading from {link.platform}...")
                     return await asyncio.to_thread(
-                        download.download_audio,
+                        download.download_media,
                         link.url,
                         tmp,
                         mode,
