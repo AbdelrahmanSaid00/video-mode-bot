@@ -12,6 +12,7 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
     filters,
 )
@@ -47,6 +48,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler(["start", "help"], handlers.start))
     app.add_handler(MessageHandler(media, handlers.on_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.on_text))
+    app.add_handler(CallbackQueryHandler(handlers.on_callback))
     return app
 
 
