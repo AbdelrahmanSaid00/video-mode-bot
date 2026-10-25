@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
+
+class ProcessingMode (str , Enum):
+    BLACK_SCREEN = "black_screen"
+    ORIGINAL = "original"
 
 @dataclass
 class Link:
